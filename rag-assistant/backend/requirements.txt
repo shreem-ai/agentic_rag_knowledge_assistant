@@ -1,0 +1,28 @@
+# Web framework
+fastapi==0.111.0
+uvicorn[standard]==0.29.0
+python-multipart==0.0.9
+
+# Google ADK & Gemini
+google-adk==0.1.0
+google-generativeai==0.7.2
+
+# Embeddings & ML
+sentence-transformers==3.0.1
+faiss-cpu==1.8.0
+torch==2.3.0
+transformers==4.41.2
+
+# Document parsing
+PyMuPDF==1.24.5
+markdown==3.6
+
+# Database
+sqlalchemy==2.0.30
+aiosqlite==0.20.0
+
+# Utilities
+pydantic==2.7.3
+pydantic-settings==2.3.0
+python-dotenv==1.0.1
+numpy==1.26.4
