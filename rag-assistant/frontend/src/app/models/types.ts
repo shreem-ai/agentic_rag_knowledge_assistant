@@ -32,15 +32,17 @@ export interface SourceChunk {
 
 // SSE event types streamed from backend
 export type SseEvent =
-  | { type: 'token'; data: string }
-  | { type: 'sources'; data: SourceChunk[] }
+  | { type: 'thinking'; data: string }    // agent tool call notification
+  | { type: 'token';    data: string }    // answer token
+  | { type: 'sources';  data: SourceChunk[] }
   | { type: 'done' }
-  | { type: 'error'; data: string };
+  | { type: 'error';    data: string };
 
 // Assembled chat message for the UI
 export interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   sources?: SourceChunk[];
-  streaming?: boolean;   // true while tokens are still arriving
+  streaming?: boolean;
+  thinkingSteps?: string[];   // agent tool call log shown as "thinking" UI
 }

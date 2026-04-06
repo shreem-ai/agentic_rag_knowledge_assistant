@@ -1,28 +1,35 @@
 # Web framework
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
+fastapi>=0.115.0
+uvicorn[standard]>=0.29.0
 python-multipart==0.0.9
 
-# Google ADK & Gemini
-google-adk==0.1.0
+# Google Gemini LLM
 google-generativeai==0.7.2
 
-# Embeddings & ML
+# Google ADK (agent layer) — install separately if not available
+# If this fails, comment it out; the app falls back to direct RAG
+google-adk==0.1.0
+
+# Embeddings + reranking (local, no API key)
 sentence-transformers==3.0.1
 faiss-cpu==1.8.0
-torch==2.3.0
-transformers==4.41.2
+
+# PyTorch CPU-only (smaller image, sufficient for inference)
+torch==2.3.0+cpu
+torchvision==0.18.0+cpu
+--extra-index-url https://download.pytorch.org/whl/cpu
 
 # Document parsing
 PyMuPDF==1.24.5
 markdown==3.6
 
-# Database
+# Async SQLite
 sqlalchemy==2.0.30
 aiosqlite==0.20.0
 
-# Utilities
-pydantic==2.7.3
-pydantic-settings==2.3.0
+# Config + utilities
+pydantic>=2.7.3
+pydantic-settings>=2.5.2
 python-dotenv==1.0.1
 numpy==1.26.4
+transformers==4.41.2

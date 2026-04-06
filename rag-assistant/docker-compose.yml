@@ -1,34 +1,45 @@
-version: "3.9"
+# docker-compose.yml — compatible with Docker Desktop on Windows/Mac/Linux
+# "version" key removed (obsolete in Compose v2, causes warnings)
 
 services:
+
   backend:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    container_name: rag_backend
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/data:/app/data
+      - rag_data:/app/data
     environment:
       - GOOGLE_API_KEY=${GOOGLE_API_KEY}
-      - ENVIRONMENT=development
+      - ENVIRONMENT=${ENVIRONMENT:-production}
     networks:
       - rag_network
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
+      interval: 20s
+      timeout: 10s
+      start_period: 90s
+      retries: 5
 
   frontend:
     build:
       context: ./frontend
       dockerfile: Dockerfile
-    container_name: rag_frontend
     ports:
       - "4200:80"
     depends_on:
-      - backend
+      backend:
+        condition: service_healthy
     networks:
       - rag_network
     restart: unless-stopped
+
+volumes:
+  rag_data:
+    driver: local
 
 networks:
   rag_network:

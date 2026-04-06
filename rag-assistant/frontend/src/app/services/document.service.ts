@@ -21,4 +21,8 @@ export class DocumentService {
   getById(id: string): Observable<Document> {
     return this.http.get<Document>(`${this.base}/${id}`);
   }
+
+  delete(id: string): Observable<{ deleted: boolean }> {
+    return this.http.delete<{ deleted: boolean }>(`${this.base}/${id}`);
+  }
 }

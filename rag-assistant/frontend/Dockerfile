@@ -1,22 +1,22 @@
+# Stage 1: Build Angular app
 FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Copy package files and install dependencies
-COPY package.json package-lock.json ./
-RUN npm ci
+# Install dependencies (ci = clean install, uses package-lock.json)
+COPY package.json ./
+RUN npm install
 
-# Copy source and build
 COPY . .
 RUN npm run build -- --configuration production
 
-# ── Production image using nginx ─────────────────────────────────────────────
-FROM nginx:alpine
+# Stage 2: Serve with nginx
+FROM nginx:1.25-alpine
 
-# Copy Angular build output
+# Copy the built Angular files
 COPY --from=builder /app/dist/frontend/browser /usr/share/nginx/html
 
-# Custom nginx config to handle Angular routing and proxy to backend
+# Copy nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
 EXPOSE 80
