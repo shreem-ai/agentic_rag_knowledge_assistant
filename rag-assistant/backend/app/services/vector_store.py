@@ -163,9 +163,17 @@ def _ensure_loaded() -> None:
     meta_path = _store_dir() / META_FILE
 
     if idx_path.exists() and meta_path.exists():
+        # Guard against empty/corrupt metadata.json from a previous failed write
+        raw = meta_path.read_text(encoding="utf-8")
+        if not raw.strip():
+            logger.warning("metadata.json is empty — starting fresh index.")
+            _index    = faiss.IndexFlatIP(EMBEDDING_DIM)
+            _metadata = []
+            return
+
         logger.info("Loading existing FAISS index from disk.")
         _index    = faiss.read_index(str(idx_path))
-        _metadata = json.loads(meta_path.read_text())
+        _metadata = json.loads(raw)
         logger.info(f"FAISS index loaded: {_index.ntotal} vectors.")
     else:
         logger.info("Creating new FAISS index.")
@@ -177,4 +185,8 @@ def _persist() -> None:
     import faiss
     d = _store_dir()
     faiss.write_index(_index, str(d / INDEX_FILE))
-    (d / META_FILE).write_text(json.dumps(_metadata, ensure_ascii=False))
+    # Must specify utf-8 explicitly — Windows default is cp1252
+    (d / META_FILE).write_text(
+        json.dumps(_metadata, ensure_ascii=False),
+        encoding="utf-8"
+    )

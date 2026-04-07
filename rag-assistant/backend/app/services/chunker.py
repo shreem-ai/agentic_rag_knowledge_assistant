@@ -43,7 +43,7 @@ def chunk_text(text: str, doc_id: str) -> List[Chunk]:
     chunk_size    = settings.CHUNK_SIZE     # target words per chunk
     chunk_overlap = settings.CHUNK_OVERLAP  # words carried over from prev chunk
 
-    # ── 1. Split into sentences ───────────────────────────────────────────────
+    # 1. Split into sentences
     # Split on: sentence-ending punctuation, paragraph breaks, or long newlines
     sentence_pattern = re.compile(
         r"(?<=[.!?])\s+|(?<=\n)\s*\n+"
@@ -55,7 +55,7 @@ def chunk_text(text: str, doc_id: str) -> List[Chunk]:
     if not sentences:
         return []
 
-    # ── 2. Accumulate sentences into chunks ───────────────────────────────────
+    # 2. Accumulate sentences into chunks
     chunks: List[Chunk] = []
     current_words: List[str] = []
     chunk_index = 0

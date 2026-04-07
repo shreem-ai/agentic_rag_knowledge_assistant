@@ -3,7 +3,7 @@ from typing import Optional, List
 from datetime import datetime
 
 
-# ── Document schemas ──────────────────────────────────────────────────────────
+# Document schemas
 
 class DocumentOut(BaseModel):
     id: str
@@ -23,7 +23,7 @@ class DocumentListOut(BaseModel):
     total: int
 
 
-# ── Chat schemas ──────────────────────────────────────────────────────────────
+# Chat schemas
 
 class ChatRequest(BaseModel):
     question: str
@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
 class SourceChunk(BaseModel):
     document_id: str
     filename: str
+    chunk_index: int = 0
     chunk_text: str
     score: float
 

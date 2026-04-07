@@ -3,10 +3,10 @@ ADK Agent Tools — Phase 4.
 
 Four tools the agent can call to orchestrate the RAG pipeline:
 
-  1. retrieve_documents   — embed query + FAISS vector search
-  2. rerank_results       — cross-encoder reranking of candidates
-  3. summarize_context    — condense chunks when total context is too long
-  4. generate_answer      — call Gemini with context + history
+  1. retrieve_documents     — embed query + FAISS vector search
+  2. rerank_results         — cross-encoder reranking of candidates
+  3. summarize_context      — condense chunks when total context is too long
+  4. prepare_answer_context — build prompt context + sources; agent writes the final answer itself
 
 Each tool is a plain Python function. Google ADK inspects the function
 signature and docstring to decide when to call it.
@@ -17,8 +17,6 @@ Design note:
   via the AgentContext store, not via global variables.
 """
 
-from __future__ import annotations
-import asyncio
 import logging
 from typing import Optional
 
@@ -30,9 +28,7 @@ from app.services.prompt_builder import build_prompt
 logger = logging.getLogger(__name__)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Tool 1 — retrieve_documents
-# ══════════════════════════════════════════════════════════════════════════════
 
 def retrieve_documents(
     query: str,
@@ -84,9 +80,7 @@ def retrieve_documents(
     return {"chunks": chunks, "total": len(chunks)}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Tool 2 — rerank_results
-# ══════════════════════════════════════════════════════════════════════════════
 
 def rerank_results(
     query: str,
@@ -131,16 +125,17 @@ def rerank_results(
     ranked = sorted(chunks, key=lambda c: c["rerank_score"], reverse=True)
     top    = ranked[: settings.TOP_K_RERANK]
 
-    logger.info(
-        f"[tool:rerank_results] top score={top[0]['rerank_score']:.3f} "
-        f"returning {len(top)} chunks"
-    )
+    if top:
+        logger.info(
+            f"[tool:rerank_results] top score={top[0]['rerank_score']:.3f} "
+            f"returning {len(top)} chunks"
+        )
+    else:
+        logger.info("[tool:rerank_results] no chunks after reranking")
     return {"chunks": top, "total": len(top)}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Tool 3 — summarize_context
-# ══════════════════════════════════════════════════════════════════════════════
 
 def summarize_context(
     chunks_json: str,
@@ -205,95 +200,86 @@ def summarize_context(
     return {"chunks": condensed, "total_words": running_total}
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# Tool 4 — generate_answer
-# ══════════════════════════════════════════════════════════════════════════════
+# Tool 4 — prepare_answer_context
 
-def generate_answer(
+def prepare_answer_context(
     question: str,
     chunks_json: str,
     history_json: str = "[]",
 ) -> dict:
     """
-    Generate a final answer using Gemini with the provided context chunks.
+    Build the context block and sources list for the agent to write its final answer.
 
-    Call this as the last step after retrieve_documents and rerank_results
-    (and optionally summarize_context). This performs a non-streaming LLM
-    call and returns the complete answer text plus structured source references.
+    Design note: this tool does NOT call an LLM. It formats the retrieved chunks
+    into a structured context string and returns the sources list. The agent itself
+    then reads the "context" field and writes the final answer — this keeps the LLM
+    call inside the ADK agent loop where streaming and tool tracing work correctly.
+
+    Call this as the last step after retrieve_documents and rerank_results.
 
     Args:
         question:     The original user question.
-        chunks_json:  JSON string of final reranked (and optionally condensed) chunks.
+        chunks_json:  JSON string of reranked (and optionally condensed) chunks.
         history_json: JSON string of conversation history as [{role, content}] list.
                       Pass "[]" if no history.
 
     Returns:
         A dict with:
-          - answer:  the full answer text string
-          - sources: list of {document_id, filename, chunk_text, score}
-          - error:   set only if generation failed
+          - context:  formatted context string the agent should use to answer
+          - sources:  list of {document_id, filename, chunk_text, score}
+          - question: echoed back for convenience
+          - error:    set only if parsing failed
     """
     import json as _json
-    import google.generativeai as genai
-    from app.services.retriever import RetrievedChunk
 
-    logger.info(f"[tool:generate_answer] question={question!r}")
+    logger.info(f"[tool:prepare_answer_context] question={question!r}")
 
     try:
-        chunks_raw   = _json.loads(chunks_json)
-        history_raw  = _json.loads(history_json)
+        chunks_raw  = _json.loads(chunks_json)
+        history_raw = _json.loads(history_json)
     except Exception as e:
-        return {"error": f"JSON parse error: {e}", "answer": "", "sources": []}
+        return {"error": f"JSON parse error: {e}", "context": "", "sources": [], "question": question}
 
-    # Convert raw dicts back to RetrievedChunk dataclasses for build_prompt
-    chunks = [
-        RetrievedChunk(
-            doc_id       = c.get("doc_id", ""),
-            filename     = c.get("filename", "unknown"),
-            chunk_index  = c.get("chunk_index", 0),
-            text         = c.get("text", ""),
-            vector_score = c.get("score", 0.0),
-            rerank_score = c.get("rerank_score", c.get("score", 0.0)),
-        )
-        for c in chunks_raw
-    ]
+    if not chunks_raw:
+        return {
+            "context": "No relevant chunks found in the documents.",
+            "sources": [],
+            "question": question,
+        }
 
-    history = [(h["role"], h["content"]) for h in history_raw]
+    # Build context block
+    context_lines = []
+    for i, c in enumerate(chunks_raw, start=1):
+        context_lines.append(f"[Chunk {i}] (from: {c.get('filename', 'unknown')})\n{c.get('text', '')}")
+    context_block = "\n\n---\n\n".join(context_lines)
 
-    # Build the prompt
-    system_prompt, user_message = build_prompt(
-        question = question,
-        chunks   = chunks,
-        history  = history,
+    # Build history block (compact)
+    history_block = ""
+    if history_raw:
+        lines = []
+        for h in history_raw[-4:]:  # last 4 turns only
+            label = "User" if h["role"] == "user" else "Assistant"
+            text  = h["content"][:200] + "…" if len(h["content"]) > 200 else h["content"]
+            lines.append(f"{label}: {text}")
+        history_block = "Prior conversation:\n" + "\n".join(lines) + "\n\n"
+
+    context = (
+        f"{history_block}"
+        f"Context from documents:\n\n{context_block}\n\n"
+        f"Answer ONLY from the context above. Cite [Chunk N] where used. "
+        f"If the answer is not in the context, say so clearly."
     )
-
-    # Call Gemini (non-streaming for tool use)
-    try:
-        if not settings.GOOGLE_API_KEY:
-            raise RuntimeError("GOOGLE_API_KEY not set.")
-
-        genai.configure(api_key=settings.GOOGLE_API_KEY)
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            generation_config={"temperature": 0.2, "max_output_tokens": 1024},
-        )
-        full_prompt = f"{system_prompt}\n\n{user_message}"
-        response = model.generate_content(full_prompt)
-        answer = response.text
-
-    except Exception as exc:
-        logger.exception(f"[tool:generate_answer] LLM error: {exc}")
-        return {"error": str(exc), "answer": "", "sources": []}
 
     sources = [
         {
-            "document_id": c.doc_id,
-            "filename":    c.filename,
-            "chunk_text":  c.text,
-            "score":       round(c.rerank_score, 4),
+            "document_id": c.get("doc_id", ""),
+            "filename":    c.get("filename", "unknown"),
+            "chunk_index": c.get("chunk_index", 0),
+            "chunk_text":  c.get("text", ""),
+            "score":       round(c.get("rerank_score", c.get("score", 0.0)), 4),
         }
-        for c in chunks
+        for c in chunks_raw
     ]
 
-    logger.info(f"[tool:generate_answer] answer length={len(answer)} chars")
-    return {"answer": answer, "sources": sources}
+    logger.info(f"[tool:prepare_answer_context] prepared context with {len(chunks_raw)} chunks")
+    return {"context": context, "sources": sources, "question": question}

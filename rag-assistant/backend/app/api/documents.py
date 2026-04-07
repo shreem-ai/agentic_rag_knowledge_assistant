@@ -28,10 +28,33 @@ router = APIRouter()
 ALLOWED_EXTENSIONS = {"pdf", "txt", "md"}
 
 
+async def _run_ingestion(doc_id: str, filename: str, file_path: Path, file_type: str):
+    from app.core.database import AsyncSessionLocal
+    import traceback
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(select(Document).where(Document.id == doc_id))
+        doc = result.scalar_one_or_none()
+        if not doc:
+            return
+
+        try:
+            chunk_count = await ingest_document(doc_id, filename, file_path, file_type)
+            doc.status      = "ready"
+            doc.chunk_count = chunk_count
+        except Exception as exc:
+            traceback.print_exc()
+            logger.exception(f"Ingestion failed for {doc_id}: {exc}")
+            doc.status        = "error"
+            doc.error_message = str(exc)
+
+        await db.commit()
+
+
 @router.post("/upload", response_model=DocumentOut)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: AsyncSession = Depends(get_db),
 ):
     # Determine extension
@@ -49,6 +72,11 @@ async def upload_document(
     Path(settings.UPLOAD_DIR).mkdir(parents=True, exist_ok=True)
 
     contents = await file.read()
+    if len(contents) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large. Maximum allowed size is 50 MB.",
+        )
     save_path.write_bytes(contents)
 
     # Persist DB record
@@ -67,27 +95,6 @@ async def upload_document(
     background_tasks.add_task(_run_ingestion, doc_id, file.filename, save_path, ext)
 
     return doc
-
-
-async def _run_ingestion(doc_id: str, filename: str, file_path: Path, file_type: str):
-    from app.core.database import AsyncSessionLocal
-
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(Document).where(Document.id == doc_id))
-        doc = result.scalar_one_or_none()
-        if not doc:
-            return
-
-        try:
-            chunk_count = await ingest_document(doc_id, filename, file_path, file_type)
-            doc.status      = "ready"
-            doc.chunk_count = chunk_count
-        except Exception as exc:
-            logger.exception(f"Ingestion failed for {doc_id}: {exc}")
-            doc.status        = "error"
-            doc.error_message = str(exc)
-
-        await db.commit()
 
 
 @router.get("", response_model=DocumentListOut)

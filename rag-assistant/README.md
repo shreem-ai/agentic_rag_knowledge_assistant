@@ -12,7 +12,7 @@ cd rag-assistant
 
 # 2. Set your Google API key
 cp .env.example .env
-# Open .env and set:  GOOGLE_API_KEY=your_key_here
+# Open .env and set:  GOOGLE_API_KEY=your_google_api_key_here
 
 # 3. Build and run (first build takes 5-10 min — downloads ML models)
 docker compose up --build
@@ -26,7 +26,7 @@ docker compose up --build
 
 ---
 
-## Demo Walkthrough
+## Walkthrough
 
 ### Step 1 — Upload a document
 
@@ -46,7 +46,7 @@ docker compose up --build
    ⚙ Agent starting RAG pipeline…
    ⚙ Called: retrieve_documents
    ⚙ Called: rerank_results
-   ⚙ Called: generate_answer
+   ⚙ Called: prepare_answer_context
    ```
 5. After the answer, click any **source chip** to see the exact chunk of text used
 
@@ -120,6 +120,23 @@ rag-assistant/
 
 ---
 
+## Design Decisions
+
+| Decision | Choice | Why |
+|----------|--------|-----|
+| Vector DB | FAISS `IndexFlatIP` | No external service needed; cosine similarity via L2-normalised inner product; persists to disk across Docker restarts |
+| Embedding model | `all-MiniLM-L6-v2` (local) | No API cost, 384-dim, fast inference, strong retrieval quality for English text |
+| Reranker | `ms-marco-MiniLM-L-6-v2` cross-encoder | More accurate than bi-encoder similarity alone; runs locally |
+| LLM | Google Gemini (auto-picked) | Free tier available; strong instruction following; integrates natively with Google ADK |
+| Agent framework | Google ADK `LlmAgent` | Required by assignment; provides tool orchestration, function call tracing, and session management |
+| Agent fallback | Direct RAG pipeline | ADK failures (quota, cold-start) are transparent to users; app never breaks |
+| Streaming | FastAPI `StreamingResponse` + SSE | Native browser support; Angular uses `fetch()` + `ReadableStream` because `HttpClient` buffers SSE |
+| Chat memory | SQLite via `aiosqlite` | Lightweight, no external dependency, persists across restarts, async-safe |
+| Chunk strategy | Sentence-boundary, 500 words, 50-word overlap | Overlap prevents context loss at boundaries; sentence boundaries avoid cutting mid-thought |
+| Source traceability | `chunk_index` + filename + score + highlighted text | Satisfies mandatory requirement; `chunk_index` shows position in document |
+
+---
+
 ## Architecture
 
 ```
@@ -144,11 +161,12 @@ nginx :80  ──/api/──►  FastAPI :8000
                     │       │cross-   │
                     │       │encoder  │
                     │  ┌────▼─────┐   │
-                    │  │generate_ │   │
-                    │  │answer    │   │
+                    │  │prepare_  │   │
+                    │  │answer_   │   │
+                    │  │context   │   │
                     │  └────┬─────┘   │
                     └───────┼─────────┘
-                            │ Gemini 1.5 Flash
+                            │ Gemini (auto-picked)
                     ┌───────▼─────────┐
                     │   SQLite        │
                     │   (chat memory) │
@@ -230,19 +248,19 @@ SSE token stream → Angular
 | `retrieve_documents` | Always first | Embed query → FAISS search → return top-10 chunks |
 | `rerank_results` | After retrieve | Cross-encoder score all pairs → return top-4 |
 | `summarize_context` | When context > 600 words | Trim chunks proportionally to stay in token budget |
-| `generate_answer` | Last step | Build prompt → call Gemini → return answer + sources |
+| `prepare_answer_context` | Last step | Format context block + sources list; agent writes the final answer itself |
 
 ### Reasoning flow
 
 ```
 Standard question:
-  retrieve_documents → rerank_results → generate_answer
+  retrieve_documents → rerank_results → prepare_answer_context
 
 Long document:
-  retrieve_documents → rerank_results → summarize_context → generate_answer
+  retrieve_documents → rerank_results → summarize_context → prepare_answer_context
 
 Follow-up question:
-  retrieve_documents → rerank_results → generate_answer (with history_json populated)
+  retrieve_documents → rerank_results → prepare_answer_context (with history_json populated)
 ```
 
 ### Fallback
@@ -297,7 +315,8 @@ The Angular frontend uses raw `fetch()` with `ReadableStream` (not Angular's `Ht
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GOOGLE_API_KEY` | **Yes** | — | Google AI Studio key for Gemini + ADK |
+| `GOOGLE_API_KEY` | **Yes** | — | Google API key for Gemini (used by both ADK agent and fallback RAG) |
+| `GEMINI_MODEL` | No | auto-picked | Override the Gemini model name (e.g. `gemini-2.0-flash`) |
 | `ENVIRONMENT` | No | `production` | `development` enables uvicorn `--reload` |
 
 Get a free API key at: https://aistudio.google.com/app/apikey
@@ -335,14 +354,7 @@ All in `backend/app/core/config.py`:
 | `CHUNK_OVERLAP` | 50 | Words shared between consecutive chunks |
 | `TOP_K_RETRIEVE` | 10 | Candidates fetched from FAISS before reranking |
 | `TOP_K_RERANK` | 4 | Final chunks sent to LLM after reranking |
+| `MAX_UPLOAD_BYTES` | 52428800 | Max upload file size (50 MB) |
+| `MAX_OUTPUT_TOKENS` | 1024 | Max tokens in LLM response |
 
 ---
-
-## Build Phases
-
-| Phase | Status | What was built |
-|-------|--------|---------------|
-| 1 | ✅ | Project scaffold, Docker, DB models, API stubs, Angular skeleton |
-| 2 | ✅ | Text extraction, chunking, embedding, FAISS vector store, background ingestion |
-| 3 | ✅ | RAG query pipeline, reranking, Gemini streaming, chat memory, source tracing |
-| 4 | ✅ | Google ADK agent with 4 tools, fallback to direct RAG, thinking steps UI |

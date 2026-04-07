@@ -1,17 +1,14 @@
 """
-Gemini LLM streaming service.
+Gemini LLM streaming service (fallback path).
 
-Uses google-generativeai (not ADK) for direct streaming token generation.
-The ADK agent layer (Phase 4) wraps this with tool orchestration.
+Uses google-generativeai for direct streaming token generation.
+This is the fallback when the ADK agent fails.
 
 Streaming approach:
   - Gemini's generate_content() with stream=True yields chunks
-  - Each chunk.text is a partial response (one or more tokens)
+  - Each chunk.text is a partial response
   - We yield each partial text as an SSE "token" event
-  - After the stream is exhausted we yield the sources event + done
-
-Model: gemini-1.5-flash (fast, cheap, good for RAG Q&A)
-Fallback: if GOOGLE_API_KEY is missing, yields a clear error message.
+  - After the stream is exhausted we yield sources + done
 """
 
 from __future__ import annotations
@@ -35,16 +32,18 @@ def _get_model():
                 "GOOGLE_API_KEY is not set. "
                 "Add it to your .env file to enable LLM responses."
             )
+        from app.services.model_picker import resolve_gemini_model
         import google.generativeai as genai
         genai.configure(api_key=settings.GOOGLE_API_KEY)
+        model_name = resolve_gemini_model()
         _gemini_model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name=model_name,
             generation_config={
-                "temperature": 0.2,      # low temp for factual Q&A
-                "max_output_tokens": 1024,
+                "temperature": 0.2,
+                "max_output_tokens": settings.MAX_OUTPUT_TOKENS,
             },
         )
-        logger.info("Gemini model initialised.")
+        logger.info("Gemini model initialised: %s", model_name)
     return _gemini_model
 
 
@@ -56,7 +55,7 @@ async def stream_answer(
     """
     Stream answer tokens from Gemini, then yield sources + done.
 
-    Yields dicts (to be JSON-serialised by the caller):
+    Yields dicts:
       {"type": "token",   "data": "partial text"}
       {"type": "sources", "data": [...source dicts...]}
       {"type": "done"}
@@ -64,7 +63,6 @@ async def stream_answer(
     """
     import asyncio
 
-    # ── No documents indexed? Short-circuit with a helpful message ────────────
     if not chunks:
         no_docs_msg = (
             "I couldn't find any relevant content in your uploaded documents "
@@ -77,19 +75,16 @@ async def stream_answer(
         yield {"type": "done"}
         return
 
-    # ── Call Gemini with streaming ────────────────────────────────────────────
     try:
         model = _get_model()
 
         # Combine system + user into one message (Flash doesn't take system role)
         full_prompt = f"{system_prompt}\n\n{user_message}"
 
-        # Run the blocking Gemini call in a thread pool
         response_iter = await asyncio.to_thread(
             lambda: model.generate_content(full_prompt, stream=True)
         )
 
-        # Iterate the streaming response
         for chunk in response_iter:
             text = getattr(chunk, "text", None)
             if text:
@@ -101,11 +96,11 @@ async def stream_answer(
         yield {"type": "done"}
         return
 
-    # ── Emit sources ──────────────────────────────────────────────────────────
     sources = [
         {
             "document_id": c.doc_id,
             "filename":    c.filename,
+            "chunk_index": c.chunk_index,
             "chunk_text":  c.text,
             "score":       round(c.rerank_score, 4),
         }

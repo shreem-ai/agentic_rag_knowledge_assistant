@@ -1,6 +1,4 @@
 """
-Chat API — Phase 4: ADK agent with SSE streaming + fallback to direct RAG.
-
 POST /chat              — ask a question, streams SSE tokens via ADK agent
 GET  /chat/history/{id} — return conversation history for a session
 """
@@ -26,9 +24,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # POST /chat
-# ══════════════════════════════════════════════════════════════════════════════
 
 @router.post("")
 async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
@@ -62,10 +58,10 @@ async def _agent_sse_stream(
     question   = request.question.strip()
     session_id = request.session_id
 
-    # ── 1. Load history ───────────────────────────────────────────────────────
+    # 1. Load history
     history = await load_history(session_id, db)
 
-    # ── 2. Build doc_id → filename lookup ─────────────────────────────────────
+    # 2. Build doc_id → filename lookup 
     if request.document_ids:
         stmt = select(Document).where(
             Document.id.in_(request.document_ids),
@@ -89,7 +85,7 @@ async def _agent_sse_stream(
         yield _sse({"type": "done"})
         return
 
-    # ── 3 + 4. Run agent and stream every event ───────────────────────────────
+    # 3 + 4. Run agent and stream every event 
     full_answer  = ""
     sources_list = []
 
@@ -107,7 +103,7 @@ async def _agent_sse_stream(
 
         yield _sse(event)
 
-    # ── 5. Save turn to memory ────────────────────────────────────────────────
+    # 5. Save turn to memory
     if full_answer.strip():
         try:
             await save_turn(
@@ -121,9 +117,7 @@ async def _agent_sse_stream(
             logger.warning(f"Failed to save conversation turn: {exc}")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # GET /chat/history/{session_id}
-# ══════════════════════════════════════════════════════════════════════════════
 
 @router.get("/history/{session_id}")
 async def get_history(session_id: str, db: AsyncSession = Depends(get_db)):
@@ -147,9 +141,7 @@ async def get_history(session_id: str, db: AsyncSession = Depends(get_db)):
     }
 
 
-# ══════════════════════════════════════════════════════════════════════════════
 # Helper
-# ══════════════════════════════════════════════════════════════════════════════
 
 def _sse(payload: dict) -> str:
     return f"data: {json.dumps(payload)}\n\n"

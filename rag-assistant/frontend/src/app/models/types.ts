@@ -26,6 +26,7 @@ export interface ChatRequest {
 export interface SourceChunk {
   document_id: string;
   filename: string;
+  chunk_index: number;
   chunk_text: string;
   score: number;
 }

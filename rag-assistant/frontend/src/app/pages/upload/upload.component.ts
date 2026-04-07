@@ -1,7 +1,7 @@
 import { Component, inject, OnInit, OnDestroy, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterLink } from '@angular/router';
-import { interval, Subscription, switchMap } from 'rxjs';
+import { interval, Subscription, switchMap, takeWhile } from 'rxjs';
 import { DocumentService } from '../../services/document.service';
 import { Document } from '../../models/types';
 
@@ -106,8 +106,10 @@ export class UploadComponent implements OnInit, OnDestroy {
 
   ngOnInit() {
     this.loadDocuments();
-    this.pollSub = interval(3000).pipe(
+    // Poll while any document is still processing; stop automatically when all are done
+    this.pollSub = interval(2500).pipe(
       switchMap(() => this.docService.list()),
+      takeWhile((res) => res.documents.some((d) => d.status === 'processing'), true),
     ).subscribe((res) => this.documents.set(res.documents));
   }
 

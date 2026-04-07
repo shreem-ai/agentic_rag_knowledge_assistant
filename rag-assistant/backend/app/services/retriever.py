@@ -14,6 +14,12 @@ from app.services.embedder import embed_query, rerank
 
 logger = logging.getLogger(__name__)
 
+_SYNTHESIS_KEYWORDS = {
+    "summary", "summarize", "summarise", "overview", "about",
+    "what is this", "what does this", "explain", "tell me about",
+    "key points", "main points", "highlights", "what topics", "introduction",
+}
+
 
 @dataclass
 class RetrievedChunk:
@@ -25,12 +31,21 @@ class RetrievedChunk:
     rerank_score: float
 
 
+def _is_synthesis_query(query: str) -> bool:
+    q = query.lower()
+    return any(kw in q for kw in _SYNTHESIS_KEYWORDS)
+
+
 async def retrieve_and_rerank(
     query:              str,
     doc_id_to_filename: dict,
     document_ids:       Optional[List[str]] = None,
 ) -> List[RetrievedChunk]:
-    results = await asyncio.to_thread(_retrieve_sync, query, document_ids)
+    # For summary/overview queries fetch more chunks so the LLM sees the full document
+    top_k_retrieve = settings.TOP_K_RETRIEVE * 2 if _is_synthesis_query(query) else settings.TOP_K_RETRIEVE
+    top_k_rerank   = settings.TOP_K_RERANK   * 2 if _is_synthesis_query(query) else settings.TOP_K_RERANK
+
+    results = await asyncio.to_thread(_retrieve_sync, query, document_ids, top_k_retrieve)
 
     if not results:
         return []
@@ -39,7 +54,7 @@ async def retrieve_and_rerank(
     scores      = await asyncio.to_thread(rerank, query, chunks_text)
 
     ranked = sorted(zip(results, scores), key=lambda x: x[1], reverse=True)
-    top    = ranked[: settings.TOP_K_RERANK]
+    top    = ranked[: top_k_rerank]
 
     retrieved = []
     for result, rscore in top:
@@ -61,10 +76,10 @@ async def retrieve_and_rerank(
     return retrieved
 
 
-def _retrieve_sync(query: str, document_ids: Optional[List[str]]) -> list:
+def _retrieve_sync(query: str, document_ids: Optional[List[str]], top_k: int = None) -> list:
     q_vec = embed_query(query)
     return vector_store.search(
         query_embedding=q_vec,
-        top_k=settings.TOP_K_RETRIEVE,
+        top_k=top_k or settings.TOP_K_RETRIEVE,
         doc_ids=document_ids,
     )

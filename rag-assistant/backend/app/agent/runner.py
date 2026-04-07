@@ -1,7 +1,7 @@
 """
 ADK Agent Runner — bridges the agent execution loop to SSE streaming.
 
-Tries the ADK agent first; falls back to the direct Phase 3 RAG pipeline
+Tries the ADK agent first; falls back to the direct RAG pipeline
 automatically so the app never breaks due to ADK issues.
 """
 
@@ -28,12 +28,13 @@ async def run_agent_stream(
         async for event in _agent_stream(question, history, doc_map, document_ids):
             yield event
     except Exception as exc:
-        logger.warning(f"ADK agent failed ({exc}), falling back to direct RAG.")
+        logger.warning(f"ADK agent failed ({exc!r}), falling back to direct RAG.")
+        yield {"type": "thinking", "data": f"ADK agent unavailable — switching to direct RAG pipeline."}
         async for event in _fallback_stream(question, history, doc_map, document_ids):
             yield event
 
 
-# ── ADK agent path ────────────────────────────────────────────────────────────
+# ADK agent path
 
 async def _agent_stream(
     question:     str,
@@ -52,7 +53,10 @@ async def _agent_stream(
 
     yield {"type": "thinking", "data": "Agent starting RAG pipeline…"}
 
-    result = await asyncio.to_thread(_run_agent_sync, agent, user_msg, history_json)
+    result = await asyncio.wait_for(
+        asyncio.to_thread(_run_agent_sync, agent, user_msg, history_json),
+        timeout=45.0,   # fall back to direct RAG if ADK takes >45s
+    )
 
     for step in result.get("tool_calls", []):
         yield {"type": "thinking", "data": f"Called: {step}"}
@@ -78,7 +82,7 @@ def _run_agent_sync(agent, user_msg: str, history_json: str) -> dict:
     try:
         from google.adk.runners import Runner
         from google.adk.sessions import InMemorySessionService
-        from google.adk.types import Content, Part
+        from google.genai.types import Content, Part
         import uuid
 
         session_service = InMemorySessionService()
@@ -105,22 +109,28 @@ def _run_agent_sync(agent, user_msg: str, history_json: str) -> dict:
             session_id = session_id,
             new_message= user_content,
         ):
-            if hasattr(event, "tool_call") and event.tool_call:
-                tool_calls.append(event.tool_call.name)
-                if event.tool_call.name == "generate_answer":
+            # Capture tool names via the Event helper
+            for fc in event.get_function_calls():
+                tool_calls.append(fc.name)
+
+            # Extract sources from prepare_answer_context tool response.
+            # That tool returns {context, sources, question} — no answer field.
+            # The agent writes the final answer itself in its final response.
+            for fr in event.get_function_responses():
+                if fr.name == "prepare_answer_context":
                     try:
                         import json as _j
-                        rs = getattr(event.tool_call, "result", "{}")
-                        r  = _j.loads(rs) if isinstance(rs, str) else rs
-                        last_sources = r.get("sources", [])
-                        if r.get("answer"):
-                            final_text = r["answer"]
+                        resp = fr.response or {}
+                        if isinstance(resp, str):
+                            resp = _j.loads(resp)
+                        last_sources = resp.get("sources", [])
                     except Exception:
                         pass
 
-            if hasattr(event, "content") and event.content:
+            # Final text answer from the agent (this is the primary answer path)
+            if event.is_final_response() and event.content:
                 for part in (event.content.parts or []):
-                    if hasattr(part, "text") and part.text:
+                    if part.text:
                         final_text = part.text
 
         return {"answer": final_text, "sources": last_sources, "tool_calls": tool_calls}
@@ -130,7 +140,7 @@ def _run_agent_sync(agent, user_msg: str, history_json: str) -> dict:
         raise
 
 
-# ── Direct RAG fallback ───────────────────────────────────────────────────────
+# Direct RAG fallback 
 
 async def _fallback_stream(
     question:     str,

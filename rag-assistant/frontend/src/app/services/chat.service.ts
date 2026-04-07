@@ -1,6 +1,18 @@
 import { Injectable } from '@angular/core';
 import { Observable } from 'rxjs';
-import { SseEvent, ChatRequest } from '../models/types';
+import { SseEvent, ChatRequest, SourceChunk } from '../models/types';
+
+export interface HistoryMessage {
+  role: 'user' | 'assistant';
+  content: string;
+  sources: SourceChunk[];
+  created_at: string;
+}
+
+export interface HistoryResponse {
+  session_id: string;
+  messages: HistoryMessage[];
+}
 
 @Injectable({ providedIn: 'root' })
 export class ChatService {
@@ -27,9 +39,9 @@ export class ChatService {
             return;
           }
 
-          const reader = res.body.getReader();
+          const reader  = res.body.getReader();
           const decoder = new TextDecoder();
-          let buffer = '';
+          let buffer    = '';
 
           while (true) {
             const { done, value } = await reader.read();
@@ -63,12 +75,17 @@ export class ChatService {
           if (err.name !== 'AbortError') observer.error(err);
         });
 
-      // Teardown: abort the fetch if the subscriber unsubscribes
       return () => controller.abort();
     });
   }
 
-  getHistory(sessionId: string): Promise<Response> {
-    return fetch(`${this.base}/history/${sessionId}`);
+  async getHistory(sessionId: string): Promise<HistoryResponse> {
+    try {
+      const res = await fetch(`${this.base}/history/${sessionId}`);
+      if (!res.ok) return { session_id: sessionId, messages: [] };
+      return res.json();
+    } catch {
+      return { session_id: sessionId, messages: [] };
+    }
   }
 }
