@@ -17,6 +17,7 @@ Design note:
   via the AgentContext store, not via global variables.
 """
 
+import json
 import logging
 import re
 
@@ -90,7 +91,6 @@ def rerank_results(query: str, chunks_json: str) -> dict:
         return {"chunks": [], "total": 0}
 
     texts = [c["text"] for c in chunks]
-    # cross-encoder scores can be negative (raw logits) — that's normal
     scores = cross_encoder_rerank(query, texts)
 
     for chunk, score in zip(chunks, scores):
