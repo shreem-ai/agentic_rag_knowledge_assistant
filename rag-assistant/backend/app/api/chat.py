@@ -55,13 +55,12 @@ async def _agent_sse_stream(
       4. Forward every event as an SSE line
       5. Save completed turn to memory
     """
+
     question   = request.question.strip()
     session_id = request.session_id
 
-    # 1. Load history
     history = await load_history(session_id, db)
 
-    # 2. Build doc_id → filename lookup 
     if request.document_ids:
         stmt = select(Document).where(
             Document.id.in_(request.document_ids),
@@ -70,7 +69,7 @@ async def _agent_sse_stream(
     else:
         stmt = select(Document).where(Document.status == "ready")
 
-    result = await db.execute(stmt)
+    result  = await db.execute(stmt)
     docs    = result.scalars().all()
     doc_map = {d.id: d.filename for d in docs}
 
@@ -85,7 +84,6 @@ async def _agent_sse_stream(
         yield _sse({"type": "done"})
         return
 
-    # 3 + 4. Run agent and stream every event 
     full_answer  = ""
     sources_list = []
 
@@ -95,27 +93,25 @@ async def _agent_sse_stream(
         doc_map      = doc_map,
         document_ids = request.document_ids,
     ):
-        # Accumulate for memory persistence
         if event["type"] == "token":
             full_answer += event["data"]
         elif event["type"] == "sources":
             sources_list = event["data"]
 
+        # Save turn BEFORE yielding done, while DB session is still open
+        if event["type"] == "done" and full_answer.strip():
+            try:
+                await save_turn(
+                    session_id = session_id,
+                    question   = question,
+                    answer     = full_answer.strip(),
+                    sources    = sources_list,
+                    db         = db,
+                )
+            except Exception as exc:
+                logger.warning(f"Failed to save conversation turn: {exc}")
+
         yield _sse(event)
-
-    # 5. Save turn to memory
-    if full_answer.strip():
-        try:
-            await save_turn(
-                session_id = session_id,
-                question   = question,
-                answer     = full_answer.strip(),
-                sources    = sources_list,
-                db         = db,
-            )
-        except Exception as exc:
-            logger.warning(f"Failed to save conversation turn: {exc}")
-
 
 # GET /chat/history/{session_id}
 

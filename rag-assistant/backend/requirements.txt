@@ -8,6 +8,7 @@ google-generativeai==0.7.2
 
 # Google ADK (agent layer)
 google-adk==0.1.0
+deprecated==1.2.14
 
 # Embeddings + reranking (local, no API key)
 sentence-transformers==3.0.1

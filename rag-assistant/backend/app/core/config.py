@@ -17,13 +17,13 @@ class Settings(BaseSettings):
     # RAG settings
     CHUNK_SIZE: int = 500          # words per chunk
     CHUNK_OVERLAP: int = 50        # overlap between chunks
-    TOP_K_RETRIEVE: int = 10       # how many chunks to retrieve
+    TOP_K_RETRIEVE: int = 6        # how many chunks to retrieve (keep tool payloads small)
     TOP_K_RERANK: int = 4          # how many chunks to keep after reranking
 
     # LLM output limit
     MAX_OUTPUT_TOKENS: int = 1024
 
-    # Embedding model (runs locally, no API key needed)
+    # Embedding model 
     EMBEDDING_MODEL: str = "sentence-transformers/all-MiniLM-L6-v2"
 
     # Reranker model
@@ -35,11 +35,12 @@ class Settings(BaseSettings):
     # Preference order for auto-pick (first available wins)
     GEMINI_MODEL_PREFERENCE: list = [
         "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
         "gemini-2.5-flash",
         "gemini-2.0-flash-lite",
-        "gemini-2.0-flash",
-        "gemini-flash-lite-latest",
+        "gemini-2.5-flash-lite",
         "gemini-flash-latest",
+        "gemini-flash-lite-latest",
     ]
 
     class Config:

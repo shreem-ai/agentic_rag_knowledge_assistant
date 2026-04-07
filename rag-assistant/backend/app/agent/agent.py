@@ -21,11 +21,7 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def get_rag_agent():
-    """
-    Build and return the singleton RAG agent.
-    Cached so the agent (and its underlying Gemini client) is only
-    initialised once per process.
-    """
+    """Build and return the singleton RAG agent. Cached per process."""
     try:
         from google.adk.agents import LlmAgent
         from google.adk.tools import FunctionTool
@@ -62,17 +58,15 @@ def get_rag_agent():
     ]
 
     agent = LlmAgent(
-        name        = "rag_assistant",
-        model       = model_name,
-        description = "A RAG-powered document Q&A assistant.",
-        instruction = _AGENT_INSTRUCTION,
-        tools       = tools,
+        name="rag_assistant",
+        model=model_name,
+        description="A RAG-powered document Q&A assistant.",
+        instruction=_AGENT_INSTRUCTION,
+        tools=tools,
     )
     logger.info("RAG ADK agent initialised with %s and 4 tools.", model_name)
     return agent
 
-
-# Agent system instruction
 
 _AGENT_INSTRUCTION = """
 You are a precise document Q&A assistant. Use these tools in order:
