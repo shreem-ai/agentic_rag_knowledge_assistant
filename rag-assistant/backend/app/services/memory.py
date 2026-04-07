@@ -13,12 +13,13 @@ Design decisions:
 
 from __future__ import annotations
 from typing import List, Tuple
-from sqlalchemy import select
+from sqlalchemy import select, func, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.conversation import Conversation
 
-MEMORY_WINDOW = 10   # number of messages to keep (user + assistant combined)
+MEMORY_WINDOW = 10    # messages returned to the LLM (user + assistant combined)
+HISTORY_TRIM_AT = 200  # prune session history once it exceeds this many rows
 
 
 async def load_history(
@@ -93,3 +94,23 @@ async def save_turn(
     db.add(user_msg)
     db.add(assistant_msg)
     await db.commit()
+
+    # Keep the session history from growing unboundedly
+    count_result = await db.execute(
+        select(func.count()).select_from(Conversation)
+        .where(Conversation.session_id == session_id)
+    )
+    count = count_result.scalar_one()
+    if count > HISTORY_TRIM_AT:
+        # Delete the oldest (count - HISTORY_TRIM_AT) rows for this session
+        oldest = await db.execute(
+            select(Conversation.id)
+            .where(Conversation.session_id == session_id)
+            .order_by(Conversation.created_at.asc())
+            .limit(count - HISTORY_TRIM_AT)
+        )
+        ids_to_delete = [row[0] for row in oldest]
+        await db.execute(
+            delete(Conversation).where(Conversation.id.in_(ids_to_delete))
+        )
+        await db.commit()

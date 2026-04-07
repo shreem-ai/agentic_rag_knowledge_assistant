@@ -6,9 +6,11 @@ GET  /chat/history/{id} — return conversation history for a session
 from __future__ import annotations
 import json
 import logging
+import time
+from collections import defaultdict, deque
 from typing import AsyncGenerator
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,11 +25,27 @@ from app.agent.runner import run_agent_stream
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Simple in-memory rate limiter: max 20 requests per IP per 60 seconds
+_RATE_LIMIT = 20
+_RATE_WINDOW = 60
+_ip_timestamps: dict[str, deque] = defaultdict(deque)
+
+
+def _check_rate_limit(ip: str) -> None:
+    now = time.monotonic()
+    window = _ip_timestamps[ip]
+    while window and window[0] < now - _RATE_WINDOW:
+        window.popleft()
+    if len(window) >= _RATE_LIMIT:
+        raise HTTPException(status_code=429, detail="Too many requests. Please slow down.")
+    window.append(now)
+
 
 # POST /chat
 
 @router.post("")
-async def chat(request: ChatRequest, db: AsyncSession = Depends(get_db)):
+async def chat(request: ChatRequest, req: Request, db: AsyncSession = Depends(get_db)):
+    _check_rate_limit(req.client.host if req.client else "unknown")
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty.")
 

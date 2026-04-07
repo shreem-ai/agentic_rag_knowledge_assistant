@@ -86,7 +86,10 @@ async def stream_answer(
         )
 
         for chunk in response_iter:
-            text = getattr(chunk, "text", None)
+            try:
+                text = chunk.text
+            except Exception:
+                continue
             if text:
                 yield {"type": "token", "data": text}
 

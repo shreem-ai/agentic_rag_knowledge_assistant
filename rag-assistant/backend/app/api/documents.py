@@ -11,7 +11,7 @@ import asyncio
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, HTTPException, Depends, BackgroundTasks, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -98,10 +98,20 @@ async def upload_document(
 
 
 @router.get("", response_model=DocumentListOut)
-async def list_documents(db: AsyncSession = Depends(get_db)):
-    result = await db.execute(select(Document).order_by(Document.created_at.desc()))
-    docs   = result.scalars().all()
-    return DocumentListOut(documents=list(docs), total=len(docs))
+async def list_documents(
+    db: AsyncSession = Depends(get_db),
+    skip: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+):
+    from sqlalchemy import func, select as sa_select
+    total_result = await db.execute(sa_select(func.count()).select_from(Document))
+    total = total_result.scalar_one()
+
+    result = await db.execute(
+        select(Document).order_by(Document.created_at.desc()).offset(skip).limit(limit)
+    )
+    docs = result.scalars().all()
+    return DocumentListOut(documents=list(docs), total=total)
 
 
 @router.get("/{doc_id}", response_model=DocumentOut)

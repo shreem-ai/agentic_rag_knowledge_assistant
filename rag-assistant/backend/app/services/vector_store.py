@@ -171,9 +171,16 @@ def _ensure_loaded() -> None:
             _metadata = []
             return
 
+        try:
+            _metadata = json.loads(raw)
+        except json.JSONDecodeError:
+            logger.warning("metadata.json is corrupt — starting fresh index.")
+            _index    = faiss.IndexFlatIP(EMBEDDING_DIM)
+            _metadata = []
+            return
+
         logger.info("Loading existing FAISS index from disk.")
         _index    = faiss.read_index(str(idx_path))
-        _metadata = json.loads(raw)
         logger.info(f"FAISS index loaded: {_index.ntotal} vectors.")
     else:
         logger.info("Creating new FAISS index.")

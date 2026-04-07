@@ -1,6 +1,9 @@
-from pydantic import BaseModel
+import re
+from pydantic import BaseModel, field_validator
 from typing import Optional, List
 from datetime import datetime
+
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', re.I)
 
 
 # Document schemas
@@ -27,8 +30,15 @@ class DocumentListOut(BaseModel):
 
 class ChatRequest(BaseModel):
     question: str
-    session_id: str                  # client generates this UUID per conversation
-    document_ids: Optional[List[str]] = None   # None = search all docs
+    session_id: str
+    document_ids: Optional[List[str]] = None
+
+    @field_validator('session_id')
+    @classmethod
+    def session_id_must_be_uuid(cls, v: str) -> str:
+        if not _UUID_RE.match(v):
+            raise ValueError("session_id must be a valid UUID")
+        return v
 
 
 class SourceChunk(BaseModel):
